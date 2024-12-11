@@ -1,7 +1,9 @@
 package disorder
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -11,6 +13,8 @@ import (
 	"github.com/dgraph-io/badger/v4"
 	"github.com/flosch/pongo2/v6"
 	"github.com/gorilla/mux"
+	"github.com/sirupsen/logrus"
+	"google.golang.org/grpc/metadata"
 )
 
 // X is a package global instance. Call Init first.
@@ -18,7 +22,7 @@ var X *Xeno
 
 // Init initializes package globals. It can only be called once. Pass it a function
 // that takes an error and logs it with your logger.
-func Init(errLogFn func(error)) {
+func Init(errLogFn func(error), logger *logrus.Logger) {
 	var once sync.Once
 	once.Do(func() {
 		opt := badger.DefaultOptions("").WithInMemory(true)
@@ -27,30 +31,84 @@ func Init(errLogFn func(error)) {
 			errLogFn(err)
 		}
 		r := mux.NewRouter()
-		X = &Xeno{db, r}
+		X = &Xeno{db, r, logger}
 		r.Handle("/route/{uuid}", X)
 	})
 }
 
+// Xeno is our server.
 type Xeno struct {
 	db *badger.DB
 	r  *mux.Router
+	l  *logrus.Logger
 }
 
-func (x *Xeno) Put(id, msg string) error {
+type ScopedWriter struct {
+	txn *badger.Txn
+	id  string
+	seq *badger.Sequence
+	l   *logrus.Logger
+}
+
+func (x *Xeno) GetScopedWriterContext(ctx context.Context) (*ScopedWriter, func(), error) {
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil, nil, errors.New("metadata missing from context")
+	}
+	idParts := md.Get("x-correlation-id")
+	if len(idParts) < 1 {
+		return nil, nil, errors.New("missing correlation id")
+	}
+	id := idParts[0]
+
+	return x.GetScopedWriter(id)
+}
+
+func (x *Xeno) GetScopedWriter(id string) (*ScopedWriter, func(), error) {
+	txn := x.db.NewTransaction(true)
+	seq, err := x.db.GetSequence([]byte(id), 10_000)
+	if err != nil {
+		return nil, nil, fmt.Errorf("could not get sequence: %w", err)
+	}
+
+	commitFn := func() {
+		if err := seq.Release(); err != nil {
+			x.l.Errorf("badger sequence: %v", err)
+		}
+		if err := txn.Commit(); err != nil {
+			x.l.Errorf("scoped writer: %v", err)
+		}
+	}
+
+	var sw ScopedWriter
+	sw.txn = txn
+	sw.id = id
+	sw.seq = seq
+	sw.l = x.l
+
+	return &sw, commitFn, nil
+}
+
+func (sw *ScopedWriter) Put(msg string) {
+	n, err := sw.seq.Next()
+	if err != nil {
+		sw.l.Errorf("scoped writer next: %v", err)
+		return
+	}
 	entry := Entry{
-		ID:    id,
 		Value: msg,
 	}
 	data, err := json.Marshal(entry)
 	if err != nil {
-		return fmt.Errorf("failed to marshal entry: %w", err)
+		sw.l.Errorf("failed to marshal entry: %v", err)
+		return
 	}
-
-	return x.db.Update(func(txn *badger.Txn) error {
-		key := fmt.Sprintf("prefix/%s", id)
-		return txn.Set([]byte(key), data)
-	})
+	paddedSeq := fmt.Sprintf("%0*d", 5, n)
+	key := fmt.Sprintf("prefix/%s/%s", sw.id, paddedSeq)
+	if err := sw.txn.Set([]byte(key), data); err != nil {
+		sw.l.Errorf("scoped writer set: %v", err)
+		return
+	}
 }
 
 type Entry struct {
@@ -90,7 +148,7 @@ func (x *Xeno) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 	if err != nil {
-		log.Printf("failed to read from badger: %v", err)
+		x.l.Errorf("failed to read from badger: %v", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -140,21 +198,21 @@ func RoutePrefixMiddleware(xeno *Xeno) func(next http.Handler) http.Handler {
 	}
 }
 
-func main2() {
-	// Open Badger DB
-	db, err := badger.Open(badger.DefaultOptions("./data"))
-	if err != nil {
-		log.Fatalf("failed to open badger: %v", err)
-	}
-	defer db.Close()
-
-	xeno := &Xeno{db: db}
-
-	r := mux.NewRouter()
-	r.Handle("/route/{uuid}", xeno)
-
-	log.Println("Server is running on :8080")
-	if err := http.ListenAndServe(":8080", r); err != nil {
-		log.Fatalf("server failed: %v", err)
-	}
-}
+//func main2() {
+//	// Open Badger DB
+//	db, err := badger.Open(badger.DefaultOptions("./data"))
+//	if err != nil {
+//		log.Fatalf("failed to open badger: %v", err)
+//	}
+//	defer db.Close()
+//
+//	xeno := &Xeno{db: db}
+//
+//	r := mux.NewRouter()
+//	r.Handle("/route/{uuid}", xeno)
+//
+//	log.Println("Server is running on :8080")
+//	if err := http.ListenAndServe(":8080", r); err != nil {
+//		log.Fatalf("server failed: %v", err)
+//	}
+//}
