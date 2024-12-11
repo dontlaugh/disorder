@@ -2,7 +2,11 @@ module github.com/dontlaugh/disorder
 
 go 1.22
 
-require github.com/dgraph-io/badger/v4 v4.5.0
+require (
+	github.com/dgraph-io/badger/v4 v4.5.0
+	github.com/flosch/pongo2/v6 v6.0.0
+	github.com/gorilla/mux v1.8.1
+)
 
 require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
