@@ -1,6 +1,8 @@
-package help
+package disorder
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestJoinIf(t *testing.T) {
 

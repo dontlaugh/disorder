@@ -1,4 +1,4 @@
-package server
+package disorder
 
 import (
 	"encoding/json"
