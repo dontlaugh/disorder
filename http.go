@@ -26,12 +26,15 @@ func Init(errLogFn func(error)) {
 		if err != nil {
 			errLogFn(err)
 		}
-		X = &Xeno{db}
+		r := mux.NewRouter()
+		X = &Xeno{db, r}
+		r.Handle("/route/{uuid}", X)
 	})
 }
 
 type Xeno struct {
 	db *badger.DB
+	r  *mux.Router
 }
 
 func (x *Xeno) Put(id, msg string) error {
