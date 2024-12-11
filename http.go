@@ -22,13 +22,18 @@ var X *Xeno
 
 // Init initializes package globals. It can only be called once. Pass it a function
 // that takes an error and logs it with your logger.
-func Init(errLogFn func(error), logger *logrus.Logger) {
+func Init(logger *logrus.Logger) {
+
 	var once sync.Once
 	once.Do(func() {
+		if logger == nil {
+			logger = logrus.StandardLogger()
+			logger.SetFormatter(&logrus.JSONFormatter{})
+		}
 		opt := badger.DefaultOptions("").WithInMemory(true)
 		db, err := badger.Open(opt)
 		if err != nil {
-			errLogFn(err)
+			logger.Errorf("badger: %v", err)
 		}
 		r := mux.NewRouter()
 		X = &Xeno{db, r, logger}
@@ -51,15 +56,17 @@ type ScopedWriter struct {
 }
 
 func (x *Xeno) GetScopedWriterContext(ctx context.Context) (*ScopedWriter, func(), error) {
+	var id string
 	md, ok := metadata.FromIncomingContext(ctx)
-	if !ok {
-		return nil, nil, errors.New("metadata missing from context")
+	if ok {
+		idParts := md.Get("x-correlation-id")
+		if len(idParts) < 1 {
+			return nil, nil, errors.New("missing correlation id")
+		}
+		id = idParts[0]
+	} else {
+		id = "unknown"
 	}
-	idParts := md.Get("x-correlation-id")
-	if len(idParts) < 1 {
-		return nil, nil, errors.New("missing correlation id")
-	}
-	id := idParts[0]
 
 	return x.GetScopedWriter(id)
 }
