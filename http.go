@@ -118,6 +118,11 @@ func (sw *ScopedWriter) Put(msg string) {
 	}
 }
 
+func (sw *ScopedWriter) Putf(format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	sw.Put(msg)
+}
+
 type Entry struct {
 	ID    string `json:"id"`
 	Name  string `json:"name"`
