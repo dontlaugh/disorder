@@ -43,9 +43,9 @@ func Init(logger *logrus.Logger) {
 
 // Xeno is our server.
 type Xeno struct {
-	db *badger.DB
-	r  *mux.Router
-	l  *logrus.Logger
+	DB *badger.DB
+	R  *mux.Router
+	L  *logrus.Logger
 }
 
 type ScopedWriter struct {
@@ -72,18 +72,18 @@ func (x *Xeno) GetScopedWriterContext(ctx context.Context) (*ScopedWriter, func(
 }
 
 func (x *Xeno) GetScopedWriter(id string) (*ScopedWriter, func(), error) {
-	txn := x.db.NewTransaction(true)
-	seq, err := x.db.GetSequence([]byte(id), 10_000)
+	txn := x.DB.NewTransaction(true)
+	seq, err := x.DB.GetSequence([]byte(id), 10_000)
 	if err != nil {
 		return nil, nil, fmt.Errorf("could not get sequence: %w", err)
 	}
 
 	commitFn := func() {
 		if err := seq.Release(); err != nil {
-			x.l.Errorf("badger sequence: %v", err)
+			x.L.Errorf("badger sequence: %v", err)
 		}
 		if err := txn.Commit(); err != nil {
-			x.l.Errorf("scoped writer: %v", err)
+			x.L.Errorf("scoped writer: %v", err)
 		}
 	}
 
@@ -91,7 +91,7 @@ func (x *Xeno) GetScopedWriter(id string) (*ScopedWriter, func(), error) {
 	sw.txn = txn
 	sw.id = id
 	sw.seq = seq
-	sw.l = x.l
+	sw.l = x.L
 
 	return &sw, commitFn, nil
 }
@@ -141,7 +141,7 @@ func (x *Xeno) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	prefix := fmt.Sprintf("prefix/%s", uuid)
 
 	var entries []Entry
-	err := x.db.View(func(txn *badger.Txn) error {
+	err := x.DB.View(func(txn *badger.Txn) error {
 		iter := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer iter.Close()
 
@@ -161,7 +161,7 @@ func (x *Xeno) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 	if err != nil {
-		x.l.Errorf("failed to read from badger: %v", err)
+		x.L.Errorf("failed to read from badger: %v", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -172,6 +172,8 @@ func (x *Xeno) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 <html>
 <head>
     <title>Entries</title>
+    <link rel="icon" 
+          href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='24' font-size='24'>🦋</text></svg>">
 </head>
 <body>
     <h1>Entries for {{ uuid }}</h1>
@@ -205,29 +207,10 @@ func RoutePrefixMiddleware(xeno *Xeno) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if strings.HasPrefix(r.URL.Path, "/route/") {
-				xeno.r.ServeHTTP(w, r)
+				xeno.R.ServeHTTP(w, r)
 				return
 			}
 			next.ServeHTTP(w, r)
 		})
 	}
 }
-
-//func main2() {
-//	// Open Badger DB
-//	db, err := badger.Open(badger.DefaultOptions("./data"))
-//	if err != nil {
-//		log.Fatalf("failed to open badger: %v", err)
-//	}
-//	defer db.Close()
-//
-//	xeno := &Xeno{db: db}
-//
-//	r := mux.NewRouter()
-//	r.Handle("/route/{uuid}", xeno)
-//
-//	log.Println("Server is running on :8080")
-//	if err := http.ListenAndServe(":8080", r); err != nil {
-//		log.Fatalf("server failed: %v", err)
-//	}
-//}
