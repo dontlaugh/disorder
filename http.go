@@ -153,9 +153,10 @@ func (x *Xeno) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return json.Unmarshal(val, &entry)
 			})
 			if err != nil {
-				return fmt.Errorf("failed to unmarshal entry: %w", err)
+				entries = append(entries, Entry{Value: fmt.Sprintf("error: %v", err)})
+			} else {
+				entries = append(entries, entry)
 			}
-			entries = append(entries, entry)
 		}
 		return nil
 	})
