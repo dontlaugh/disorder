@@ -186,7 +186,6 @@ func (x *Xeno) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 </html>
 	`))
 
-	// Render template
 	ctx := pongo2.Context{
 		"uuid":    uuid,
 		"entries": entries,
