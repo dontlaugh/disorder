@@ -190,11 +190,13 @@ func (x *Xeno) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"entries": entries,
 	}
 
+	w.WriteHeader(http.StatusOK)
 	if err := tpl.ExecuteWriter(ctx, w); err != nil {
 		log.Printf("failed to render template: %v", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
+	w.Write([]byte("\n"))
 }
 
 // RoutePrefixMiddleware returns a middleware that filters requests to only call the Xeno
